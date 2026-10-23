@@ -1,0 +1,14 @@
+The Legend of Apple TV – Payback Edition (Ludwigshafen)
+
+Engine
+  PlayCanvas Engine 2.9.2 (MIT) – https://github.com/playcanvas/engine
+
+3D-Modelle und Animationen (alle CC0 1.0 / gemeinfrei)
+  Quaternius – https://quaternius.com
+    - Universal Base Characters
+    - Modular Outfits (Fantasy)
+    - Universal Animation Library
+    - Downtown City MegaKit
+  Bezogen über das öffentliche Repository github.com/githubxiansaiful/city-life-online-game
+
+Alles andere (Spielcode, prozedurale Texturen, Sounds, Musik, Texte) wurde für dieses Spiel erstellt.
