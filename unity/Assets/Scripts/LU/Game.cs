@@ -31,8 +31,14 @@ namespace LU
             L.BuildOuter();
             BuildTrees();
             foreach (var g in new[] { "MI_RedBrick", "MI_Trim", "MI_Trim_MetalConcrete", "MI_Concrete" }) city.B.Grime.Add(g);
+            foreach (var lb in city.Lods)
+            {
+                string m = lb.style == "brick" ? "LoBrick" : lb.style == "office" ? "LoOffice" : "LoPlaster"; float h = lb.h - lb.y0, w = lb.w - .7f, d = lb.y0 > 0 ? lb.d : lb.d - .7f;
+                city.B.Add(m, "lo:" + lb.cell, Geo.BoxUV(w, h, d, lb.x + lb.w / 2, lb.y0 + h / 2, lb.z + lb.d / 2, 3, true), M.T(lb.x + lb.w / 2, lb.y0 + h / 2, lb.z + lb.d / 2), M.Hex(lb.tint));
+            }
             world = new GameObject("Welt").transform;
             city.B.Build(world, Mat, m => !(m.StartsWith("G_") || m == "AO" || m == "MI_StreetDecals" || m == "Mark" || m == "Water" || m.StartsWith("INT") || m == "Far" || m == "MI_Glass" || m == "Glass"));
+            BuildCells();
             yield return null;
             DynamicGI.UpdateEnvironment();
             var probe = new GameObject("Reflexionen").AddComponent<ReflectionProbe>();
@@ -60,6 +66,36 @@ namespace LU
             status = null;
         }
 
+        // ---------- Detailstufen je Zelle (64 m): nah = Baukasten, fern = Quader ----------
+        class Cell { public float x, z; public Renderer[] hi, lo; public int near = -1; }
+        Cell[] cells = new Cell[0]; float cellT;
+        const float LOD_IN = 170, LOD_OUT = 190;   // Hysterese gegen Flackern an der Grenze
+        void BuildCells()
+        {
+            var list = new List<Cell>();
+            foreach (var kv in city.B.Cells)
+            {
+                if (kv.Key == "far" || kv.Key.StartsWith("lo:")) continue; var p = kv.Key.Split('_');
+                var c = new Cell { x = (int.Parse(p[0]) + .5f) * City.CELL, z = (int.Parse(p[1]) + .5f) * City.CELL, hi = kv.Value.ToArray() };
+                c.lo = city.B.Cells.TryGetValue("lo:" + kv.Key, out var lo) ? lo.ToArray() : new Renderer[0];
+                foreach (var r in c.lo) r.enabled = false; list.Add(c);
+            }
+            cells = list.ToArray(); UpdateCells(true);
+        }
+        void UpdateCells(bool force)
+        {
+            cellT -= Time.deltaTime; if (cellT > 0 && !force) return; cellT = .25f;
+            Vector3 cp = cam.transform.position; float cx = cp.x, cz = -cp.z;   // zurück in Spielkoordinaten
+            for (int i = 0; i < cells.Length; i++)
+            {
+                var c = cells[i]; float dx = c.x - cx, dz = c.z - cz, d2 = dx * dx + dz * dz;
+                int near = c.near == 1 ? (d2 < LOD_OUT * LOD_OUT ? 1 : 0) : (d2 < LOD_IN * LOD_IN ? 1 : 0);
+                if (near == c.near) continue; c.near = near;
+                for (int k = 0; k < c.hi.Length; k++) c.hi[k].enabled = near == 1;
+                for (int k = 0; k < c.lo.Length; k++) c.lo[k].enabled = near == 0;
+            }
+        }
+
         Material Mat(string name)
         {
             if (mats.TryGetValue(name, out var m)) return m;
@@ -70,7 +106,7 @@ namespace LU
         {
             var go = new GameObject("Kamera"); cam = go.AddComponent<Camera>(); go.tag = "MainCamera";
             cam.fieldOfView = 58; cam.nearClipPlane = .1f; cam.farClipPlane = 1600; cam.clearFlags = CameraClearFlags.Skybox;
-            var d = go.AddComponent<UniversalAdditionalCameraData>(); d.renderPostProcessing = true; d.antialiasing = AntialiasingMode.SubpixelMorphologicalAntiAliasing; d.antialiasingQuality = AntialiasingQuality.High; d.renderShadows = true;
+            var d = go.AddComponent<UniversalAdditionalCameraData>(); d.renderPostProcessing = true; d.antialiasing = AntialiasingMode.None; d.renderShadows = true;
         }
         void SetupLight()
         {
@@ -128,8 +164,9 @@ namespace LU
         void ReadInput(out float sx, out float sy)
         {
             sx = 0; sy = 0;
-            foreach (var t in Input.touches)
+            for (int ti = 0; ti < Input.touchCount; ti++)
             {
+                var t = Input.GetTouch(ti);
                 if (t.phase == TouchPhase.Began) { if (t.position.x < Screen.width * .45f && stickId < 0) { stickId = t.fingerId; stickO = t.position; } else if (lookId < 0) { lookId = t.fingerId; lookLast = t.position; } }
                 if (t.fingerId == stickId) { stick = Vector2.ClampMagnitude((t.position - stickO) / (Screen.height * .12f), 1); if (t.phase == TouchPhase.Ended || t.phase == TouchPhase.Canceled) { stickId = -1; stick = Vector2.zero; } }
                 if (t.fingerId == lookId) { var dlt = t.position - lookLast; lookLast = t.position; camYaw -= dlt.x * .0068f * 900f / Screen.height; camPitch = Mathf.Clamp(camPitch - dlt.y * .0045f * 900f / Screen.height, -.25f, .95f); if (t.phase == TouchPhase.Ended || t.phase == TouchPhase.Canceled) lookId = -1; }
@@ -143,8 +180,11 @@ namespace LU
 
         void Collide(ref float x, ref float z, float r)
         {
-            foreach (var c in city.Cols)
+            for (int gx = Mathf.FloorToInt((x - r) / City.GS); gx <= Mathf.FloorToInt((x + r) / City.GS); gx++)
+            for (int gz = Mathf.FloorToInt((z - r) / City.GS); gz <= Mathf.FloorToInt((z + r) / City.GS); gz++)
+            foreach (int ci in city.ColsAt(gx, gz))
             {
+                var c = city.Cols[ci];
                 if (c.y0 > 1.5f) continue; if (x < c.x - r || x > c.x + c.w + r || z < c.z - r || z > c.z + c.d + r) continue;
                 float nx = Mathf.Clamp(x, c.x, c.x + c.w), nz = Mathf.Clamp(z, c.z, c.z + c.d), dx = x - nx, dz = z - nz, d2 = dx * dx + dz * dz;
                 if (d2 < r * r)
@@ -158,8 +198,8 @@ namespace LU
 
         void Update()
         {
-            fps = Mathf.Lerp(fps, 1f / Mathf.Max(.001f, Time.unscaledDeltaTime), .05f);
-            if (city == null || kalle == null) { OrbitCamera(); return; }
+            fps = Mathf.Lerp(fps, 1f / Mathf.Max(.001f, Time.unscaledDeltaTime), .05f); fpsT -= Time.unscaledDeltaTime; if (fpsT <= 0) { fpsT = .5f; fpsText = Mathf.RoundToInt(fps) + " fps"; }
+            if (city == null || kalle == null) { OrbitCamera(); if (cells.Length > 0) UpdateCells(false); return; }
             float dt = Mathf.Min(.05f, Time.deltaTime);
             ReadInput(out float sx, out float sy); float ml = Mathf.Min(1, new Vector2(sx, sy).magnitude);
             float fx = -Mathf.Sin(camYaw), fz = -Mathf.Cos(camYaw), rx = Mathf.Cos(camYaw), rz = -Mathf.Sin(camYaw);
@@ -177,7 +217,7 @@ namespace LU
             kalle.Upper(!run || !moving, "carry");
             foreach (var cv in civs)
             {
-                float dp = Mathf.Abs(cv.x - px) + Mathf.Abs(cv.z - pz); cv.c.Visible(dp < 70); if (dp > 70 || !cv.walk) continue;
+                float dp = Mathf.Abs(cv.x - px) + Mathf.Abs(cv.z - pz); bool vis = cv.c.holder.activeSelf ? dp < 78 : dp < 70; cv.c.Visible(vis); if (!vis || !cv.walk) continue;
                 float tx = cv.dir > 0 ? cv.bx : cv.ax, tz = cv.dir > 0 ? cv.bz : cv.az, dx = tx - cv.x, dz = tz - cv.z, dd = Mathf.Sqrt(dx * dx + dz * dz);
                 if (cv.wait > 0) { cv.wait -= dt; cv.c.State("idle"); }
                 else if (dd < .3f) { cv.dir *= -1; cv.wait = Random.Range(1f, 4f); }
@@ -185,6 +225,7 @@ namespace LU
                 cv.c.Place(cv.x, cv.z, cv.yaw);
             }
             FollowCamera(dt);
+            UpdateCells(false);
         }
 
         void OrbitCamera()
@@ -199,11 +240,9 @@ namespace LU
             float hx = px + rx * sh, hz = pz + rz * sh, dist = 3.9f;
             // Kamera nicht in Wände schieben
             float dd = dist;
-            foreach (var c in city.Cols)
-            {
-                if (Mathf.Abs(c.x + c.w / 2 - hx) > c.w / 2 + 6 || Mathf.Abs(c.z + c.d / 2 - hz) > c.d / 2 + 6) continue;
-                float t = RayBox(hx, ty, hz, ox, oy, oz, c); if (t < dd) dd = Mathf.Max(.5f, t - .25f);
-            }
+            for (int gx = Mathf.FloorToInt((hx - 6) / City.GS); gx <= Mathf.FloorToInt((hx + 6) / City.GS); gx++)
+            for (int gz = Mathf.FloorToInt((hz - 6) / City.GS); gz <= Mathf.FloorToInt((hz + 6) / City.GS); gz++)
+            foreach (int ci in city.ColsAt(gx, gz)) { float t = RayBox(hx, ty, hz, ox, oy, oz, city.Cols[ci]); if (t < dd) dd = Mathf.Max(.5f, t - .25f); }
             Vector3 want = M.U(hx + ox * dd, Mathf.Max(.35f, ty + oy * dd), hz + oz * dd);
             camPos = Vector3.Lerp(camPos, want, Mathf.Min(1, dt * 14)); if ((camPos - want).magnitude > 6) camPos = want;
             cam.transform.position = camPos;
@@ -212,23 +251,24 @@ namespace LU
 
         static float RayBox(float ox, float oy, float oz, float dx, float dy, float dz, Box2 c)
         {
-            float tmin = 0, tmax = 1e9f; float[] o = { ox, oy, oz }, d = { dx, dy, dz }, lo = { c.x, c.y0, c.z }, hi = { c.x + c.w, c.y1, c.z + c.d };
-            for (int i = 0; i < 3; i++)
-            {
-                if (Mathf.Abs(d[i]) < 1e-8f) { if (o[i] < lo[i] || o[i] > hi[i]) return float.PositiveInfinity; continue; }
-                float t1 = (lo[i] - o[i]) / d[i], t2 = (hi[i] - o[i]) / d[i]; if (t1 > t2) (t1, t2) = (t2, t1);
-                tmin = Mathf.Max(tmin, t1); tmax = Mathf.Min(tmax, t2); if (tmin > tmax) return float.PositiveInfinity;
-            }
+            float tmin = 0, tmax = 1e9f;
+            if (!Slab(ox, dx, c.x, c.x + c.w, ref tmin, ref tmax) || !Slab(oy, dy, c.y0, c.y1, ref tmin, ref tmax) || !Slab(oz, dz, c.z, c.z + c.d, ref tmin, ref tmax)) return float.PositiveInfinity;
             return tmin;
         }
+        static bool Slab(float o, float d, float lo, float hi, ref float tmin, ref float tmax)
+        {
+            if (Mathf.Abs(d) < 1e-8f) return o >= lo && o <= hi;
+            float t1 = (lo - o) / d, t2 = (hi - o) / d; if (t1 > t2) { float s = t1; t1 = t2; t2 = s; }
+            if (t1 > tmin) tmin = t1; if (t2 < tmax) tmax = t2; return tmin <= tmax;
+        }
 
+        GUIStyle st, small; int stH; float fpsT; string fpsText = "";
         void OnGUI()
         {
-            var st = new GUIStyle(GUI.skin.label) { fontSize = Mathf.RoundToInt(Screen.height * .032f), fontStyle = FontStyle.Bold }; st.normal.textColor = Color.white;
+            if (st == null || stH != Screen.height) { stH = Screen.height; st = new GUIStyle(GUI.skin.label) { fontSize = Mathf.RoundToInt(Screen.height * .032f), fontStyle = FontStyle.Bold }; st.normal.textColor = Color.white; small = new GUIStyle(st) { fontSize = Mathf.RoundToInt(Screen.height * .024f) }; }
             if (status != null) { GUI.Label(new Rect(20, Screen.height * .45f, Screen.width - 40, 60), status, st); return; }
-            var small = new GUIStyle(st) { fontSize = Mathf.RoundToInt(Screen.height * .024f) };
             GUI.Label(new Rect(16, 12, Screen.width, 40), "The Legend of Apple TV · Unity-Vorschau (Phase 1: Stadt & Figuren)", small);
-            GUI.Label(new Rect(16, 12 + Screen.height * .035f, 400, 40), Mathf.RoundToInt(fps) + " fps", small);
+            GUI.Label(new Rect(16, 12 + Screen.height * .035f, 400, 40), fpsText, small);
             if (stickId >= 0) { var c = GUI.color; GUI.color = new Color(1, 1, 1, .35f); float r = Screen.height * .12f; GUI.Box(new Rect(stickO.x - r, Screen.height - stickO.y - r, r * 2, r * 2), ""); GUI.color = c; }
         }
     }

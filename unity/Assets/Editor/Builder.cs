@@ -166,6 +166,7 @@ namespace LU
             Vc("Rust", K("T_Dirt_BaseColor"), K("T_Dirt_Normal"), null, null, .2f, .4f, 1, 1, new Color(.6f, .42f, .32f)); Vc("Tire", null, null, null, null, .15f, 0);
             Vc("Wood", K("T_Dirt_BaseColor"), null, null, null, .25f, 0, 1, 1, new Color(.85f, .7f, .55f)); Vc("Conc", K("T_Concrete_BaseColor"), K("T_Concrete_Normal"), K("T_Concrete_MetalSmooth"), K("T_Concrete_Occlusion"), .5f, 1, 1);
             Vc("Mark", null, null, null, null, .4f, 0); Vc("Corr", K("T_MetalConcrete_BaseColor"), K("T_MetalConcrete_Normal"), null, null, .5f, .5f, 2);
+            Vc("LoBrick", K("T_RedBrick_BaseColor"), null, null, null, .3f, 0); Vc("LoPlaster", K("T_Trim_BaseColor"), null, null, null, .3f, 0); Vc("LoOffice", K("T_MetalConcrete_BaseColor"), null, null, null, .5f, 0);
             Vc("Slate", K("T_RoofSlate_BaseColor"), K("T_RoofSlate_Normal"), null, null, .5f, 0); Vc("Far", null, null, null, null, .3f, 0);
             Vc("Foliage", null, null, null, null, .25f, 0); Vc("Bark", K("T_Dirt_BaseColor"), K("T_Dirt_Normal"), null, null, .2f, 0, 1.5f, 1, new Color(.45f, .38f, .3f));
             var lamp = Vc("Lamp", null, null, null, null, .9f, 0); lamp.SetColor("_EmissionColor", new Color(1, .95f, .85f) * 1.5f); lamp.EnableKeyword("_EMISSION"); lamp.SetFloat("_UseEmission", 1);

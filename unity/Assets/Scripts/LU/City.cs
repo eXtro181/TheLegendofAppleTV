@@ -44,12 +44,29 @@ namespace LU
         public static string CellOf(float x, float z) => Mathf.FloorToInt(x / CELL) + "_" + Mathf.FloorToInt(z / CELL);
         public static Zone ZoneAt(float x, float z) { foreach (var zz in Zones) if (x >= zz.x && x < zz.x + zz.w && z >= zz.z && z < zz.z + zz.d) return zz; return null; }
 
-        public void AddCol(float x, float z, float w, float d, float y1, float y0 = 0, bool fence = false) => Cols.Add(new Box2 { x = x, z = z, w = w, d = d, y0 = y0, y1 = y1, fence = fence });
+        // Raster für Kollisionsabfragen (12 m): O(1) statt O(n) über alle ~4000 Kästen
+        public const float GS = 12;
+        readonly Dictionary<int, List<int>> grid = new();
+        static readonly List<int> empty = new();
+        static int GKey(int gx, int gz) => gx * 4096 + gz + 2048 * 4097;
+        public void AddCol(float x, float z, float w, float d, float y1, float y0 = 0, bool fence = false)
+        {
+            int idx = Cols.Count; Cols.Add(new Box2 { x = x, z = z, w = w, d = d, y0 = y0, y1 = y1, fence = fence });
+            for (int gx = Mathf.FloorToInt(x / GS); gx <= Mathf.FloorToInt((x + w) / GS); gx++)
+                for (int gz = Mathf.FloorToInt(z / GS); gz <= Mathf.FloorToInt((z + d) / GS); gz++)
+                { int k = GKey(gx, gz); if (!grid.TryGetValue(k, out var l)) grid[k] = l = new List<int>(4); l.Add(idx); }
+        }
+        /// Kasten-Indizes der Rasterzelle von (x,z); Kästen über mehrere Zellen erscheinen in jeder davon.
+        public List<int> ColsAt(int gx, int gz) => grid.TryGetValue(GKey(gx, gz), out var l) ? l : empty;
+        public readonly List<LodBox> Lods = new();
+        public struct LodBox { public float x, z, w, d, h, y0; public string style; public int tint; public string cell; }
 
         public bool FreeAt(float x, float z, float r)
         {
             if (x < r || z < r || x > WW - r || z > WD - r) return false;
-            foreach (var c in Cols) { if (c.y0 > 1.5f) continue; if (x > c.x - r && x < c.x + c.w + r && z > c.z - r && z < c.z + c.d + r) return false; }
+            for (int gx = Mathf.FloorToInt((x - r) / GS); gx <= Mathf.FloorToInt((x + r) / GS); gx++)
+                for (int gz = Mathf.FloorToInt((z - r) / GS); gz <= Mathf.FloorToInt((z + r) / GS); gz++)
+                    foreach (int i in ColsAt(gx, gz)) { var c = Cols[i]; if (c.y0 > 1.5f) continue; if (x > c.x - r && x < c.x + c.w + r && z > c.z - r && z < c.z + c.d + r) return false; }
             foreach (var rd in Roads) if (x > rd.x - r && x < rd.x + rd.w + r && z > rd.z - r && z < rd.z + rd.d + r) return false;
             if (z > 280.8f && z < 295.6f) return false; if (x > WATERX - 1) return false; return true;
         }
@@ -157,6 +174,12 @@ namespace LU
             }
             else if (o.collide) AddCol(o.x, o.z, o.w, o.d, rh);
             AoRing(o.x, o.z, o.w, o.d);
+            // Fernansicht (wie Browser-Version): Quader je Haus, 0,35 m eingerückt
+            float hb = b.roof == "slate" ? H + .4f : rh - .3f;
+            void Lod(float lx, float lz, float lw, float ld, float lh, float ly0 = 0) => Lods.Add(new LodBox { x = lx, z = lz, w = lw, d = ld, h = lh, y0 = ly0, style = b.style, tint = b.tint, cell = b.cell });
+            if (o.gateX0.HasValue) { float g0 = o.gateX0.Value; Lod(o.x, o.z, g0 - o.x, o.d, hb); Lod(g0 + 4, o.z, o.x + o.w - g0 - 4, o.d, hb); Lod(g0, o.z, 4, o.d, hb, 3); }
+            else Lod(o.x, o.z, o.w, o.d, hb);
+            if (b.roof == "slate") Lod(o.x + 2, o.z + 2, o.w - 4, o.d - 4, rh - .3f);
         }
 
         public void FireEscape(float cx, float cz, float ry, int F)
