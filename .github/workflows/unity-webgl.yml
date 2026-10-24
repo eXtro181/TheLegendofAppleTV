@@ -1,0 +1,56 @@
+# Baut die Unity-Version (Ordner unity/) als WebGL und legt sie unter /unity3d/ auf GitHub Pages ab.
+# Benötigte Secrets (einmalig): UNITY_LICENSE (Inhalt der Unity_lic.ulf), UNITY_EMAIL, UNITY_PASSWORD
+name: Unity WebGL
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['unity/**', '.github/workflows/unity-webgl.yml']
+permissions:
+  contents: write
+concurrency: { group: unity-webgl, cancel-in-progress: true }
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs: { ok: '${{ steps.c.outputs.ok }}' }
+    steps:
+      - id: c
+        env: { UNITY_LICENSE: '${{ secrets.UNITY_LICENSE }}' }
+        run: |
+          if [ -z "$UNITY_LICENSE" ]; then echo "::warning::Secret UNITY_LICENSE fehlt – Build übersprungen (siehe unity/README.md)"; echo "ok=false" >> "$GITHUB_OUTPUT"; else echo "ok=true" >> "$GITHUB_OUTPUT"; fi
+  build:
+    needs: check
+    if: needs.check.outputs.ok == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { lfs: false }
+      - uses: actions/cache@v4
+        with:
+          path: unity/Library
+          key: Library-WebGL-${{ hashFiles('unity/Assets/**', 'unity/Packages/**', 'unity/ProjectSettings/**') }}
+          restore-keys: Library-WebGL-
+      - name: Platz schaffen
+        run: sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android || true
+      - uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          projectPath: unity
+          targetPlatform: WebGL
+          buildMethod: LU.Builder.BuildWebGL
+          buildsPath: build
+          customParameters: -logFile -
+      - name: Build finden
+        id: out
+        run: |
+          d=$(dirname "$(find build unity/build -name index.html 2>/dev/null | head -1)")
+          echo "Build-Ordner: $d"; ls -la "$d"; echo "dir=$d" >> "$GITHUB_OUTPUT"
+      - name: Nach /unity3d veröffentlichen
+        run: |
+          rm -rf unity3d && mkdir unity3d && sudo cp -r "${{ steps.out.outputs.dir }}"/* unity3d/ && sudo chown -R $(id -u):$(id -g) unity3d
+          git config user.name "github-actions" && git config user.email "actions@github.com"
+          git add unity3d && git commit -m "Unity-WebGL-Build [skip ci]" || echo "nichts zu committen"
+          git pull --rebase origin main && git push origin HEAD:main
